@@ -2,6 +2,7 @@ import * as anchor from "@project-serum/anchor";
 import { Program } from "@project-serum/anchor";
 import { Project } from "../target/types/project";
 import { General } from "../target/types/general";
+import {Transfer} from "../target/types/transfer";
 const assert = require("assert");
 import * as spl from "@solana/spl-token";
 import bs58 from "bs58";
@@ -15,6 +16,7 @@ describe("project", () => {
 
   const projectProgram = anchor.workspace.Project as Program<Project>;
   const generalProgram = anchor.workspace.General as Program<General>;
+  const transferProgram = anchor.workspace.Transfer as Program<Transfer>;
 
   let alice: anchor.web3.Keypair;
   let bob: anchor.web3.Keypair;
@@ -35,6 +37,8 @@ describe("project", () => {
 
   const threshold = 2;
   const timeLimit = 100 * 60 * 60 * 24; // 1 day
+
+  const transferAmount1 = 1000;
 
   it("Funds all users", async () => {
     await provider.connection.confirmTransaction(
@@ -145,6 +149,7 @@ describe("project", () => {
   });
 
   const projectId = uuidv4();
+  const transferId = uuidv4();
 
   it("initializes project program", async () => {
     const [projectPDA, projectBump] =
@@ -285,4 +290,52 @@ describe("project", () => {
       assert.equal(error.error.errorCode.code, "NoProposalCreated");
     }
   });
+  
+  it("initialize transfer program and deposit the amount for transfer", async() => {
+
+    const [transferPDA, transferBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [Buffer.from("transfer"), Buffer.from(transferId.substring(0,18)),Buffer.from(transferId.substring(18,36))],
+      transferProgram.programId
+    )
+
+    const [projectPDA, projectBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [Buffer.from("project"), Buffer.from(projectId.substring(0,18)), Buffer.from(projectId.substring(18,36))],
+      projectProgram.programId
+    )
+
+    const [generalPDA, generalBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [Buffer.from("general")],
+      generalProgram.programId
+    )
+
+    const [projectPoolWalletPDA, projectPoolWalletBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [Buffer.from("pool"), Buffer.from(transferId.substring(0,18)),Buffer.from(transferId.substring(18,36))],
+      transferProgram.programId
+    )
+
+    let _casTokenAccountBefore = await spl.getAccount(provider.connection,casTokenAccount);
+
+    const tx = await transferProgram.methods.initialize(transferId, generalBump, transferBump, transferAmount1, dan.publicKey).accounts({
+      baseAccount: transferPDA,
+      generalAccount: generalPDA,
+      projectPoolWallet: projectPoolWalletPDA,
+      tokenMint: USDCMint,
+      authority: cas.publicKey,
+      walletToWithdrawFrom: casTokenAccount,
+      generalProgram: generalProgram.programId,
+      systemProgram: anchor.web3.SystemProgram.programId,
+      tokenProgram: spl.TOKEN_PROGRAM_ID,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY
+    }).signers([cas]).rpc();
+
+    const state = await transferProgram.account.transferParameter.fetch(transferPDA);
+    assert.equal(state.amount, transferAmount1);
+
+    let _casTokenAccountAfter = await spl.getAccount(provider.connection,casTokenAccount);
+    let _poolWallet = await spl.getAccount(provider.connection, projectPoolWalletPDA);
+    assert.equal(state.amount, _casTokenAccountBefore.amount - _casTokenAccountAfter.amount);
+    assert.equal(state.amount, _poolWallet.amount);
+
+  })
+
 });

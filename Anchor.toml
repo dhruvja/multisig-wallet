@@ -3,6 +3,7 @@ seeds = false
 [programs.localnet]
 project = "45GpJwQe42EXn8EQoyBnp5dU51h2BWrkv8ASmGKERpKD"
 general = "5urf7xSHXmvWP6oxLHHhW1aEefDw1D4Wq342ccRFBBv5"
+transfer = "F5s5fXeXWgWf8L42NerMVxRHUwWsQhgM5tguedzvNwjC"
 
 [registry]
 url = "https://anchor.projectserum.com"
