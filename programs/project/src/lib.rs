@@ -58,6 +58,54 @@ pub mod project {
         Ok(())
     }
 
+    pub fn remove_signatory_proposal(ctx: Context<Proposal>, _base_bump: u8,_project_id: String, signatory: Pubkey) -> Result<()> {
+
+        let parameters = &mut ctx.accounts.base_account;
+
+        let index = parameters.get_index(signatory);
+
+        if parameters.delete.status == true {
+            let current_timestamp = Clock::get().unwrap().unix_timestamp;
+            if (current_timestamp - parameters.delete.timestamp) > parameters.time_limit.into() {
+                if index == usize::MAX{
+                    return Err(error!(ErrorCode::SignatoryNotFound));
+                }
+                parameters.create_delete(signatory);
+            }
+            else{
+                return Err(error!(ErrorCode::ProposalInProgress));
+            }
+        }
+        else {
+            if index == usize::MAX{
+                return Err(error!(ErrorCode::SignatoryNotFound));
+            }
+            parameters.create_delete(signatory);
+        }
+
+        Ok(())
+    }
+
+    pub fn change_threshold_proposal(ctx: Context<Proposal>, _base_bump: u8, _project_id: String, threshold: u32) -> Result<()> {
+
+        let parameters = &mut ctx.accounts.base_account;
+
+        if parameters.change_threshold.status == true {
+            let current_timestamp = Clock::get().unwrap().unix_timestamp;
+            if (current_timestamp - parameters.delete.timestamp) > parameters.time_limit.into() {
+                parameters.create_change(threshold);
+            }
+            else{
+                return Err(error!(ErrorCode::ProposalInProgress)); 
+            }
+        }
+        else {
+            parameters.create_change(threshold);    
+        }
+
+        Ok(())
+    }
+
     pub fn sign_proposal(ctx: Context<SignProposal>, _base_bump: u8, _project_id: String, key: String) -> Result<()> {
 
         let matching_key = &key[..];
@@ -94,8 +142,57 @@ pub mod project {
                     return Err(error!(ErrorCode::NoProposalCreated))
                 }
             },
-            "delete" => msg!("delete proposal"),
-            "change" => msg!("Change proposal"),
+            "delete" => {
+                if parameters.delete.status == true {
+                    if parameters.signatories[final_index].delete == false {
+                        parameters.signatories[final_index].delete = true;
+                        parameters.delete.votes += 1;
+
+                        let mut index = usize::MAX;
+
+                        if parameters.delete.votes >= parameters.threshold {
+                            for i in 0..parameters.signatories.len() {
+                                if parameters.signatories[i].key == parameters.delete.old_signatory{
+                                    index = i;
+                                }
+                            }
+                            if index == usize::MAX {
+                                return Err(error!(ErrorCode::SignatoryNotFound))
+                            }
+                            parameters.signatories.remove(index);
+                            if parameters.threshold > parameters.signatories.len().try_into().unwrap() {
+                                parameters.threshold = parameters.signatories.len().try_into().unwrap();
+                            }
+                            parameters.reset_delete();
+                        }
+                    }
+                    else {
+                        return Err(error!(ErrorCode::RepeatedSignature));
+                    }
+                }
+                else{
+                    return Err(error!(ErrorCode::NoProposalCreated))
+                }
+            }
+            "change" => {
+                if parameters.change_threshold.status == true {
+                    if parameters.signatories[final_index].change_threshold == false {
+                        parameters.signatories[final_index].change_threshold = true;
+                        parameters.change_threshold.votes += 1;
+
+                        if parameters.change_threshold.votes >= parameters.threshold {
+                            parameters.threshold = parameters.change_threshold.new_threshold;
+                            parameters.reset_change();
+                        }
+                    }
+                    else {
+                        return Err(error!(ErrorCode::RepeatedSignature));
+                    }
+                }
+                else{
+                    return Err(error!(ErrorCode::NoProposalCreated))
+                } 
+            },
             _ => msg!("Wrong proposal")
         }
 
@@ -216,6 +313,41 @@ impl ProjectParameter {
         self.add.timestamp = Clock::get().unwrap().unix_timestamp;
         self.add.votes = 0;
     }
+
+    pub fn create_delete(&mut self, signatory: Pubkey) {
+        self.delete.status = true;
+        self.delete.old_signatory = signatory;
+        self.delete.timestamp = Clock::get().unwrap().unix_timestamp;
+        self.delete.votes = 0;
+    }
+
+    pub fn reset_delete(&mut self) {
+        self.delete.votes = 0;
+        self.delete.status = false;
+        self.delete.timestamp = 0;
+
+        for i in 0..self.signatories.len() {
+            self.signatories[i].delete = false;
+        }
+    }
+
+    pub fn create_change(&mut self, threshold: u32) {
+        self.change_threshold.status = true;
+        self.change_threshold.new_threshold = threshold;
+        self.change_threshold.timestamp = Clock::get().unwrap().unix_timestamp;
+        self.change_threshold.votes = 0;
+    }
+    
+    pub fn reset_change(&mut self) {
+        self.change_threshold.status = false;
+        self.change_threshold.new_threshold = 0;
+        self.change_threshold.timestamp = 0;
+        self.change_threshold.votes = 0;
+
+        for i in 0..self.signatories.len() {
+            self.signatories[i].change_threshold = false;
+        }
+    }
 }
 
 #[error_code]
@@ -228,5 +360,6 @@ pub enum ErrorCode {
     NoProposalCreated,
     #[msg("There is already a proposal in progress")]
     ProposalInProgress,
-
+    #[msg("This signatory does not exist")]
+    SignatoryNotFound,
 }

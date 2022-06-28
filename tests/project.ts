@@ -2,7 +2,7 @@ import * as anchor from "@project-serum/anchor";
 import { Program } from "@project-serum/anchor";
 import { Project } from "../target/types/project";
 import { General } from "../target/types/general";
-import {Transfer} from "../target/types/transfer";
+import { Transfer } from "../target/types/transfer";
 const assert = require("assert");
 import * as spl from "@solana/spl-token";
 import bs58 from "bs58";
@@ -36,6 +36,7 @@ describe("project", () => {
   admin = anchor.web3.Keypair.generate(); // Admin
 
   const threshold = 2;
+  const newThreshold = 3;
   const timeLimit = 100 * 60 * 60 * 24; // 1 day
 
   const transferAmount1 = 1000;
@@ -132,17 +133,23 @@ describe("project", () => {
       .signers([admin])
       .rpc();
 
-    const state = await generalProgram.account.generalParameter.fetch(generalPDA);
-    assert.equal(state.tokenMint.toBase58(), USDCMint.toBase58())
+    const state = await generalProgram.account.generalParameter.fetch(
+      generalPDA
+    );
+    assert.equal(state.tokenMint.toBase58(), USDCMint.toBase58());
 
     try {
-      await generalProgram.methods.changeMint(generalBump).accounts({
-        baseAccount: generalPDA,
-        tokenMint: USDCMint,
-        authority: alice.publicKey
-      }).signers([alice]).rpc();
+      await generalProgram.methods
+        .changeMint(generalBump)
+        .accounts({
+          baseAccount: generalPDA,
+          tokenMint: USDCMint,
+          authority: alice.publicKey,
+        })
+        .signers([alice])
+        .rpc();
 
-      throw "Error occured, invalid authority while initializing general program"
+      throw "Error occured, invalid authority while initializing general program";
     } catch (error) {
       assert.equal(error.error.errorCode.number, 2001);
     }
@@ -154,7 +161,11 @@ describe("project", () => {
   it("initializes project program", async () => {
     const [projectPDA, projectBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("project"), Buffer.from(projectId.substring(0,18)), Buffer.from(projectId.substring(18,36))],
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
         projectProgram.programId
       );
 
@@ -194,7 +205,11 @@ describe("project", () => {
   it("Initialze the signatories for the project", async () => {
     const [projectPDA, projectBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("project"), Buffer.from(projectId.substring(0,18)), Buffer.from(projectId.substring(18,36))],
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
         projectProgram.programId
       );
 
@@ -206,7 +221,7 @@ describe("project", () => {
     ];
 
     const tx = await projectProgram.methods
-      .addInitialSignatories(projectBump,projectId, all, threshold, timeLimit)
+      .addInitialSignatories(projectBump, projectId, all, threshold, timeLimit)
       .accounts({
         baseAccount: projectPDA,
       })
@@ -220,7 +235,11 @@ describe("project", () => {
   it("Create a proposal to add a new signatory", async () => {
     const [projectPDA, projectBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("project"), Buffer.from(projectId.substring(0,18)), Buffer.from(projectId.substring(18,36))],
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
         projectProgram.programId
       );
 
@@ -238,17 +257,16 @@ describe("project", () => {
     );
 
     assert(state.add.status, true);
-    // assert(state.add.newSignatory, dan.publicKey)
   });
 
   it("Sign the add proposal", async () => {
-    it("testing if it works or not", async () => {
-      assert.equal(false, true);
-    });
-
     const [projectPDA, projectBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("project"), Buffer.from(projectId.substring(0,18)), Buffer.from(projectId.substring(18,36))],
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
         projectProgram.programId
       );
 
@@ -264,8 +282,23 @@ describe("project", () => {
     let state = await projectProgram.account.projectParameter.fetch(projectPDA);
     assert.equal(state.add.votes, 1);
 
+    try {
+      await projectProgram.methods
+      .signProposal(projectBump, projectId, "add")
+      .accounts({
+        baseAccount: projectPDA,
+        authority: alice.publicKey,
+      })
+      .signers([alice])
+      .rpc();
+
+      throw "repeated signature"
+    } catch (error) {
+      assert.equal(error.error.errorCode.code, "RepeatedSignature")
+    }
+
     const tx1 = await projectProgram.methods
-      .signProposal(projectBump,projectId, "add")
+      .signProposal(projectBump, projectId, "add")
       .accounts({
         baseAccount: projectPDA,
         authority: bob.publicKey,
@@ -274,7 +307,11 @@ describe("project", () => {
       .rpc();
 
     state = await projectProgram.account.projectParameter.fetch(projectPDA);
+    const lastIndex = state.signatories.length;
+
     assert.equal(state.add.votes, 0);
+    assert.equal(state.signatories[lastIndex - 1].key.toBase58(), dan.publicKey.toBase58());
+    assert.equal(state.add.status, false);
 
     try {
       const tx = await projectProgram.methods
@@ -290,52 +327,271 @@ describe("project", () => {
       assert.equal(error.error.errorCode.code, "NoProposalCreated");
     }
   });
-  
-  it("initialize transfer program and deposit the amount for transfer", async() => {
 
-    const [transferPDA, transferBump] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from("transfer"), Buffer.from(transferId.substring(0,18)),Buffer.from(transferId.substring(18,36))],
-      transferProgram.programId
-    )
+  it("Create a delete proposal", async () => {
+    const [projectPDA, projectBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
 
-    const [projectPDA, projectBump] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from("project"), Buffer.from(projectId.substring(0,18)), Buffer.from(projectId.substring(18,36))],
-      projectProgram.programId
-    )
+    const tx = await projectProgram.methods
+      .removeSignatoryProposal(projectBump, projectId, dan.publicKey)
+      .accounts({
+        baseAccount: projectPDA,
+        authority: admin.publicKey,
+      })
+      .signers([admin])
+      .rpc();
 
-    const [generalPDA, generalBump] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from("general")],
-      generalProgram.programId
-    )
+    const state = await projectProgram.account.projectParameter.fetch(
+      projectPDA
+    );
 
-    const [projectPoolWalletPDA, projectPoolWalletBump] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from("pool"), Buffer.from(transferId.substring(0,18)),Buffer.from(transferId.substring(18,36))],
-      transferProgram.programId
-    )
+    assert(state.delete.status, true);
+  });
 
-    let _casTokenAccountBefore = await spl.getAccount(provider.connection,casTokenAccount);
+  it("signs the delete proposal", async () => {
+    const [projectPDA, projectBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
 
-    const tx = await transferProgram.methods.initialize(transferId, generalBump, transferBump, transferAmount1, dan.publicKey).accounts({
-      baseAccount: transferPDA,
-      generalAccount: generalPDA,
-      projectPoolWallet: projectPoolWalletPDA,
-      tokenMint: USDCMint,
-      authority: cas.publicKey,
-      walletToWithdrawFrom: casTokenAccount,
-      generalProgram: generalProgram.programId,
-      systemProgram: anchor.web3.SystemProgram.programId,
-      tokenProgram: spl.TOKEN_PROGRAM_ID,
-      rent: anchor.web3.SYSVAR_RENT_PUBKEY
-    }).signers([cas]).rpc();
+    const tx = await projectProgram.methods
+      .signProposal(projectBump, projectId, "delete")
+      .accounts({
+        baseAccount: projectPDA,
+        authority: alice.publicKey,
+      })
+      .signers([alice])
+      .rpc();
 
-    const state = await transferProgram.account.transferParameter.fetch(transferPDA);
+    let state = await projectProgram.account.projectParameter.fetch(projectPDA);
+    assert.equal(state.delete.votes, 1);
+
+    try {
+      const tx = await projectProgram.methods
+      .signProposal(projectBump, projectId, "delete")
+      .accounts({
+        baseAccount: projectPDA,
+        authority: alice.publicKey,
+      })
+      .signers([alice])
+      .rpc();
+    } catch (error) {
+      assert.equal(error.error.errorCode.code, "RepeatedSignature")
+    }
+
+    const tx1 = await projectProgram.methods
+      .signProposal(projectBump, projectId, "delete")
+      .accounts({
+        baseAccount: projectPDA,
+        authority: bob.publicKey,
+      })
+      .signers([bob])
+      .rpc();
+
+    state = await projectProgram.account.projectParameter.fetch(projectPDA);
+    assert.equal(state.delete.votes, 0);
+
+    try {
+      const tx = await projectProgram.methods
+        .signProposal(projectBump, projectId, "delete")
+        .accounts({
+          baseAccount: projectPDA,
+          authority: alice.publicKey,
+        })
+        .signers([alice])
+        .rpc();
+      console.log("This should not get printed");
+    } catch (error) {
+      assert.equal(error.error.errorCode.code, "NoProposalCreated");
+    }
+  });
+
+  it("Create a change threshold proposal", async () => {
+    const [projectPDA, projectBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
+
+    const tx = await projectProgram.methods
+      .changeThresholdProposal(projectBump, projectId, newThreshold)
+      .accounts({
+        baseAccount: projectPDA,
+        authority: admin.publicKey,
+      })
+      .signers([admin])
+      .rpc();
+
+    const state = await projectProgram.account.projectParameter.fetch(
+      projectPDA
+    );
+
+    assert(state.changeThreshold.status, true);
+  });
+
+  it("signs the change threshold proposal", async () => {
+    const [projectPDA, projectBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
+
+    const tx = await projectProgram.methods
+      .signProposal(projectBump, projectId, "change")
+      .accounts({
+        baseAccount: projectPDA,
+        authority: alice.publicKey,
+      })
+      .signers([alice])
+      .rpc();
+
+    let state = await projectProgram.account.projectParameter.fetch(projectPDA);
+    assert.equal(state.changeThreshold.votes, 1);
+
+    try {
+      const tx = await projectProgram.methods
+      .signProposal(projectBump, projectId, "change")
+      .accounts({
+        baseAccount: projectPDA,
+        authority: alice.publicKey,
+      })
+      .signers([alice])
+      .rpc();
+    } catch (error) {
+      assert.equal(error.error.errorCode.code, "RepeatedSignature")
+    }
+
+    const tx1 = await projectProgram.methods
+      .signProposal(projectBump, projectId, "change")
+      .accounts({
+        baseAccount: projectPDA,
+        authority: bob.publicKey,
+      })
+      .signers([bob])
+      .rpc();
+
+    state = await projectProgram.account.projectParameter.fetch(projectPDA);
+    assert.equal(state.changeThreshold.votes, 0);
+    assert.equal(state.threshold, newThreshold);
+
+    try {
+      const tx = await projectProgram.methods
+        .signProposal(projectBump, projectId, "change")
+        .accounts({
+          baseAccount: projectPDA,
+          authority: alice.publicKey,
+        })
+        .signers([alice])
+        .rpc();
+      console.log("This should not get printed");
+    } catch (error) {
+      assert.equal(error.error.errorCode.code, "NoProposalCreated");
+    }
+  });
+
+  it("initialize transfer program and deposit the amount for transfer", async () => {
+    const [transferPDA, transferBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("transfer"),
+          Buffer.from(transferId.substring(0, 18)),
+          Buffer.from(transferId.substring(18, 36)),
+        ],
+        transferProgram.programId
+      );
+
+    const [projectPDA, projectBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
+
+    const [generalPDA, generalBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("general")],
+        generalProgram.programId
+      );
+
+    const [projectPoolWalletPDA, projectPoolWalletBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("pool"),
+          Buffer.from(transferId.substring(0, 18)),
+          Buffer.from(transferId.substring(18, 36)),
+        ],
+        transferProgram.programId
+      );
+
+    let _casTokenAccountBefore = await spl.getAccount(
+      provider.connection,
+      casTokenAccount
+    );
+
+    const tx = await transferProgram.methods
+      .initialize(
+        transferId,
+        generalBump,
+        transferBump,
+        transferAmount1,
+        dan.publicKey
+      )
+      .accounts({
+        baseAccount: transferPDA,
+        generalAccount: generalPDA,
+        projectPoolWallet: projectPoolWalletPDA,
+        tokenMint: USDCMint,
+        authority: cas.publicKey,
+        walletToWithdrawFrom: casTokenAccount,
+        generalProgram: generalProgram.programId,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        tokenProgram: spl.TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([cas])
+      .rpc();
+
+    const state = await transferProgram.account.transferParameter.fetch(
+      transferPDA
+    );
     assert.equal(state.amount, transferAmount1);
 
-    let _casTokenAccountAfter = await spl.getAccount(provider.connection,casTokenAccount);
-    let _poolWallet = await spl.getAccount(provider.connection, projectPoolWalletPDA);
-    assert.equal(state.amount, _casTokenAccountBefore.amount - _casTokenAccountAfter.amount);
+    let _casTokenAccountAfter = await spl.getAccount(
+      provider.connection,
+      casTokenAccount
+    );
+    let _poolWallet = await spl.getAccount(
+      provider.connection,
+      projectPoolWalletPDA
+    );
+    assert.equal(
+      state.amount,
+      _casTokenAccountBefore.amount - _casTokenAccountAfter.amount
+    );
     assert.equal(state.amount, _poolWallet.amount);
-
-  })
+  });
 
 });
