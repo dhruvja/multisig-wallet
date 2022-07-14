@@ -25,7 +25,8 @@ describe("project", () => {
   let admin: anchor.web3.Keypair;
 
   let USDCMint: anchor.web3.PublicKey; // token which would be staked
-  let casTokenAccount: any; // cas token account
+  let casTokenAccount: anchor.web3.PublicKey; // cas token account
+  let adminTokenAccount: anchor.web3.PublicKey; // admin token account
 
   let initialMintAmount = 100000000;
 
@@ -38,6 +39,7 @@ describe("project", () => {
   const threshold = 2;
   const newThreshold = 3;
   const timeLimit = 100 * 60 * 60 * 24; // 1 day
+  const percentTransfer = 2;
 
   const transferAmount1 = 1000;
 
@@ -95,6 +97,13 @@ describe("project", () => {
       cas,
       USDCMint,
       cas.publicKey
+    );
+
+    adminTokenAccount = await spl.createAccount(
+      provider.connection,
+      admin,
+      USDCMint,
+      admin.publicKey
     );
 
     await spl.mintTo(
@@ -155,8 +164,10 @@ describe("project", () => {
     }
   });
 
-  const projectId = uuidv4();
+  let projectId = uuidv4();
   const transferId = uuidv4();
+
+  console.log(projectId)
 
   it("initializes project program", async () => {
     const [projectPDA, projectBump] =
@@ -169,13 +180,27 @@ describe("project", () => {
         projectProgram.programId
       );
 
+    const [projectPoolPDA, projectPoolBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("pool"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
+
     const tx = await projectProgram.methods
-      .initialize(projectId)
+      .initialize(projectId, percentTransfer)
       .accounts({
         baseAccount: projectPDA,
+        projectPoolAccount: projectPoolPDA,
+        tokenMint: USDCMint,
         authority: alice.publicKey,
         admin: admin.publicKey,
         systemProgram: anchor.web3.SystemProgram.programId,
+        tokenProgram: spl.TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .signers([alice])
       .rpc();
@@ -284,17 +309,16 @@ describe("project", () => {
 
     try {
       await projectProgram.methods
-      .signProposal(projectBump, projectId, "add")
-      .accounts({
-        baseAccount: projectPDA,
-        authority: alice.publicKey,
-      })
-      .signers([alice])
-      .rpc();
-
-      throw "repeated signature"
+        .signProposal(projectBump, projectId, "add")
+        .accounts({
+          baseAccount: projectPDA,
+          authority: alice.publicKey,
+        })
+        .signers([alice])
+        .rpc();
+      throw "repeated signature";
     } catch (error) {
-      assert.equal(error.error.errorCode.code, "RepeatedSignature")
+      assert.equal(error.error.errorCode.code, "RepeatedSignature");
     }
 
     const tx1 = await projectProgram.methods
@@ -310,7 +334,10 @@ describe("project", () => {
     const lastIndex = state.signatories.length;
 
     assert.equal(state.add.votes, 0);
-    assert.equal(state.signatories[lastIndex - 1].key.toBase58(), dan.publicKey.toBase58());
+    assert.equal(
+      state.signatories[lastIndex - 1].key.toBase58(),
+      dan.publicKey.toBase58()
+    );
     assert.equal(state.add.status, false);
 
     try {
@@ -380,15 +407,15 @@ describe("project", () => {
 
     try {
       const tx = await projectProgram.methods
-      .signProposal(projectBump, projectId, "delete")
-      .accounts({
-        baseAccount: projectPDA,
-        authority: alice.publicKey,
-      })
-      .signers([alice])
-      .rpc();
+        .signProposal(projectBump, projectId, "delete")
+        .accounts({
+          baseAccount: projectPDA,
+          authority: alice.publicKey,
+        })
+        .signers([alice])
+        .rpc();
     } catch (error) {
-      assert.equal(error.error.errorCode.code, "RepeatedSignature")
+      assert.equal(error.error.errorCode.code, "RepeatedSignature");
     }
 
     const tx1 = await projectProgram.methods
@@ -457,7 +484,7 @@ describe("project", () => {
       );
 
     const tx = await projectProgram.methods
-      .signProposal(projectBump, projectId, "change")
+      .signProposal(projectBump, projectId, "change threshold")
       .accounts({
         baseAccount: projectPDA,
         authority: alice.publicKey,
@@ -470,19 +497,19 @@ describe("project", () => {
 
     try {
       const tx = await projectProgram.methods
-      .signProposal(projectBump, projectId, "change")
-      .accounts({
-        baseAccount: projectPDA,
-        authority: alice.publicKey,
-      })
-      .signers([alice])
-      .rpc();
+        .signProposal(projectBump, projectId, "change threshold")
+        .accounts({
+          baseAccount: projectPDA,
+          authority: alice.publicKey,
+        })
+        .signers([alice])
+        .rpc();
     } catch (error) {
-      assert.equal(error.error.errorCode.code, "RepeatedSignature")
+      assert.equal(error.error.errorCode.code, "RepeatedSignature");
     }
 
     const tx1 = await projectProgram.methods
-      .signProposal(projectBump, projectId, "change")
+      .signProposal(projectBump, projectId, "change threshold")
       .accounts({
         baseAccount: projectPDA,
         authority: bob.publicKey,
@@ -496,7 +523,7 @@ describe("project", () => {
 
     try {
       const tx = await projectProgram.methods
-        .signProposal(projectBump, projectId, "change")
+        .signProposal(projectBump, projectId, "change threshold")
         .accounts({
           baseAccount: projectPDA,
           authority: alice.publicKey,
@@ -509,21 +536,21 @@ describe("project", () => {
     }
   });
 
-  it("initialize transfer program and deposit the amount for transfer", async () => {
-    const [transferPDA, transferBump] =
-      await anchor.web3.PublicKey.findProgramAddress(
-        [
-          Buffer.from("transfer"),
-          Buffer.from(transferId.substring(0, 18)),
-          Buffer.from(transferId.substring(18, 36)),
-        ],
-        transferProgram.programId
-      );
-
+  it("Deposit tokens to project pool wallet", async () => {
     const [projectPDA, projectBump] =
       await anchor.web3.PublicKey.findProgramAddress(
         [
           Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
+
+    const [projectPoolPDA, projectPoolBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("pool"),
           Buffer.from(projectId.substring(0, 18)),
           Buffer.from(projectId.substring(18, 36)),
         ],
@@ -536,33 +563,221 @@ describe("project", () => {
         generalProgram.programId
       );
 
-    const [projectPoolWalletPDA, projectPoolWalletBump] =
-      await anchor.web3.PublicKey.findProgramAddress(
-        [
-          Buffer.from("pool"),
-          Buffer.from(transferId.substring(0, 18)),
-          Buffer.from(transferId.substring(18, 36)),
-        ],
-        transferProgram.programId
-      );
-
-    let _casTokenAccountBefore = await spl.getAccount(
+    const casTokenAccountBefore = await spl.getAccount(
       provider.connection,
       casTokenAccount
     );
 
-    const tx = await transferProgram.methods
-      .initialize(
-        transferId,
+    const tx = await projectProgram.methods
+      .depositFunds(
+        projectId,
+        projectBump,
+        projectPoolBump,
         generalBump,
-        transferBump,
-        transferAmount1,
-        dan.publicKey
+        transferAmount1
       )
       .accounts({
-        baseAccount: transferPDA,
+        baseAccount: projectPDA,
         generalAccount: generalPDA,
-        projectPoolWallet: projectPoolWalletPDA,
+        projectPoolAccount: projectPoolPDA,
+        tokenMint: USDCMint,
+        authority: cas.publicKey,
+        walletToWithdrawFrom: casTokenAccount,
+        adminTokenWallet: adminTokenAccount,
+        generalProgram: generalProgram.programId,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        tokenProgram: spl.TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([cas])
+      .rpc();
+
+    const casTokenAccountAfter = await spl.getAccount(
+      provider.connection,
+      casTokenAccount
+    );
+
+    const _adminTokenAccount = await spl.getAccount(
+      provider.connection,
+      adminTokenAccount
+    );
+
+    assert.equal(
+      casTokenAccountBefore.amount - casTokenAccountAfter.amount,
+      transferAmount1
+    );
+
+    assert.equal(
+      _adminTokenAccount.amount,
+      (transferAmount1 * percentTransfer) / 100
+    );
+  });
+
+  it("activate shutdown and reduce the threshold to 1", async () => {
+    const [projectPDA, projectBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("project"),
+          projectId.substring(0, 18),
+          projectId.substring(18, 36),
+        ],
+        projectProgram.programId
+      );
+
+      try {
+        const timestampAfter50Days = new Date(2022, 8, 17).getTime() / 1000;
+        await projectProgram.methods
+          .fallBack(projectBump, projectId, timestampAfter50Days)
+          .accounts({
+            baseAccount: projectPDA,
+            authority: admin.publicKey,
+          })
+          .signers([admin])
+          .rpc();
+  
+        throw "cannot activate shutdown before 90 days"
+      } catch (error) {
+        assert.equal(error.error.errorCode.code, "ShutDownCannotBeActivated")
+        const state = await projectProgram.account.projectParameter.fetch(projectPDA);
+        assert.equal(state.shutdown, false);
+      }
+
+    const timestampAfter90Days = new Date(2022, 11, 15).getTime() / 1000;
+
+    const tx = await projectProgram.methods
+      .fallBack(projectBump, projectId, timestampAfter90Days)
+      .accounts({
+        baseAccount: projectPDA,
+        authority: admin.publicKey,
+      })
+      .signers([admin])
+      .rpc();
+
+    let state = await projectProgram.account.projectParameter.fetch(projectPDA);
+    assert.equal(state.shutdown, true);
+    assert.equal(state.threshold, newThreshold - 1);
+    assert.equal(state.lastReducedThreshold, timestampAfter90Days);
+
+    const timestampAfter120Days = new Date(2022, 12, 16).getTime() / 1000;
+    const tx1 = await projectProgram.methods
+      .fallBack(projectBump, projectId, timestampAfter120Days)
+      .accounts({
+        baseAccount: projectPDA,
+        authority: admin.publicKey,
+      })
+      .signers([admin])
+      .rpc();
+
+    state = await projectProgram.account.projectParameter.fetch(projectPDA);
+    assert.equal(state.threshold, newThreshold - 1 - 1);
+    assert.equal(state.lastReducedThreshold, timestampAfter120Days);
+
+    try {
+      const timestampAfter151Days = new Date(2022, 12, 17).getTime() / 1000;
+      const tx2 = await projectProgram.methods
+        .fallBack(projectBump, projectId, timestampAfter151Days)
+        .accounts({
+          baseAccount: projectPDA,
+          authority: admin.publicKey,
+        })
+        .signers([admin])
+        .rpc();
+
+      throw "minimum of 30 days has to be passed to further reduce the threshold"
+    } catch (error) {
+      assert.equal(error.error.errorCode.code, "MinimumTimeNotPassed")
+    }
+
+    try {
+      const timestampAfter150Days = new Date(2023, 1, 17).getTime() / 1000;
+      const tx2 = await projectProgram.methods
+        .fallBack(projectBump, projectId, timestampAfter150Days)
+        .accounts({
+          baseAccount: projectPDA,
+          authority: admin.publicKey,
+        })
+        .signers([admin])
+        .rpc();
+
+      throw "cannot reduce the threshold further"
+    } catch (error) {
+      assert.equal(error.error.errorCode.code, "MinimumThresholdReached")
+    }
+  });
+
+  it("Create a transfer proposal", async () => {
+    const [projectPDA, projectBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
+
+    const tx = await projectProgram.methods
+      .transferAmountProposal(projectBump, projectId, 100 ,casTokenAccount)
+      .accounts({
+        baseAccount: projectPDA,
+        authority: admin.publicKey,
+      })
+      .signers([admin])
+      .rpc();
+
+    const state = await projectProgram.account.projectParameter.fetch(
+      projectPDA
+    );
+
+    assert(state.transferAmount.status, true);
+  });
+
+  it("withdraw the funds after signing", async() => {
+
+    const [projectPDA, projectBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("project"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
+
+    const [projectPoolPDA, projectPoolBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("pool"),
+          Buffer.from(projectId.substring(0, 18)),
+          Buffer.from(projectId.substring(18, 36)),
+        ],
+        projectProgram.programId
+      );
+
+    const [generalPDA, generalBump] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("general")],
+        generalProgram.programId
+      );
+
+    const casTokenAccountBefore = await spl.getAccount(
+      provider.connection,
+      casTokenAccount
+    );
+
+    console.log(casTokenAccountBefore.amount)
+
+    const tx = await projectProgram.methods
+      .signTransfer(
+        generalBump,
+        projectBump,
+        projectPoolBump,
+        projectId
+      )
+      .accounts({
+        baseAccount: projectPDA,
+        generalAccount: generalPDA,
+        projectPoolAccount: projectPoolPDA,
         tokenMint: USDCMint,
         authority: cas.publicKey,
         walletToWithdrawFrom: casTokenAccount,
@@ -574,24 +789,297 @@ describe("project", () => {
       .signers([cas])
       .rpc();
 
-    const state = await transferProgram.account.transferParameter.fetch(
-      transferPDA
-    );
-    assert.equal(state.amount, transferAmount1);
+      const casTokenAccountAfter = await spl.getAccount(
+        provider.connection,
+        casTokenAccount
+      );
+  
+      console.log(casTokenAccountAfter.amount)
 
-    let _casTokenAccountAfter = await spl.getAccount(
-      provider.connection,
-      casTokenAccount
-    );
-    let _poolWallet = await spl.getAccount(
-      provider.connection,
-      projectPoolWalletPDA
-    );
-    assert.equal(
-      state.amount,
-      _casTokenAccountBefore.amount - _casTokenAccountAfter.amount
-    );
-    assert.equal(state.amount, _poolWallet.amount);
-  });
+  })
 
+  // it("initialize transfer program and deposit the amount for transfer", async () => {
+  //   const [transferPDA, transferBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("transfer"),
+  //         Buffer.from(transferId.substring(0, 18)),
+  //         Buffer.from(transferId.substring(18, 36)),
+  //       ],
+  //       transferProgram.programId
+  //     );
+
+  //   const [projectPDA, projectBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("project"),
+  //         Buffer.from(projectId.substring(0, 18)),
+  //         Buffer.from(projectId.substring(18, 36)),
+  //       ],
+  //       projectProgram.programId
+  //     );
+
+  //   const [generalPDA, generalBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [Buffer.from("general")],
+  //       generalProgram.programId
+  //     );
+
+  //   const [projectPoolWalletPDA, projectPoolWalletBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("pool"),
+  //         Buffer.from(transferId.substring(0, 18)),
+  //         Buffer.from(transferId.substring(18, 36)),
+  //       ],
+  //       transferProgram.programId
+  //     );
+
+  //   let _casTokenAccountBefore = await spl.getAccount(
+  //     provider.connection,
+  //     casTokenAccount
+  //   );
+
+  //   const tx = await transferProgram.methods
+  //     .initialize(
+  //       transferId,
+  //       generalBump,
+  //       transferBump,
+  //       transferAmount1,
+  //       casTokenAccount
+  //     )
+  //     .accounts({
+  //       baseAccount: transferPDA,
+  //       generalAccount: generalPDA,
+  //       projectPoolWallet: projectPoolWalletPDA,
+  //       tokenMint: USDCMint,
+  //       authority: cas.publicKey,
+  //       walletToWithdrawFrom: casTokenAccount,
+  //       generalProgram: generalProgram.programId,
+  //       systemProgram: anchor.web3.SystemProgram.programId,
+  //       tokenProgram: spl.TOKEN_PROGRAM_ID,
+  //       rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+  //     })
+  //     .signers([cas])
+  //     .rpc();
+
+  //   const state = await transferProgram.account.transferParameter.fetch(
+  //     transferPDA
+  //   );
+  //   assert.equal(state.amount, transferAmount1);
+
+  //   let _casTokenAccountAfter = await spl.getAccount(
+  //     provider.connection,
+  //     casTokenAccount
+  //   );
+  //   let _poolWallet = await spl.getAccount(
+  //     provider.connection,
+  //     projectPoolWalletPDA
+  //   );
+  //   assert.equal(
+  //     state.amount,
+  //     _casTokenAccountBefore.amount - _casTokenAccountAfter.amount
+  //   );
+  //   assert.equal(state.amount, _poolWallet.amount);
+  // });
+
+  // it("update transfer status", async () => {
+  //   const [transferPDA, transferBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("transfer"),
+  //         Buffer.from(transferId.substring(0, 18)),
+  //         Buffer.from(transferId.substring(18, 36)),
+  //       ],
+  //       transferProgram.programId
+  //     );
+
+  //   const tx = await transferProgram.methods
+  //     .updateState(transferBump, transferId)
+  //     .accounts({
+  //       baseAccount: transferPDA,
+  //       authority: admin.publicKey,
+  //     })
+  //     .signers([admin])
+  //     .rpc();
+
+  //   const state = await transferProgram.account.transferParameter.fetch(
+  //     transferPDA
+  //   );
+
+  //   assert.equal(state.state, true);
+  // });
+
+  // it("sign the proposal and complete the transfer", async () => {
+  //   const [transferPDA, transferBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("transfer"),
+  //         Buffer.from(transferId.substring(0, 18)),
+  //         Buffer.from(transferId.substring(18, 36)),
+  //       ],
+  //       transferProgram.programId
+  //     );
+
+  //   const [projectPDA, projectBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("project"),
+  //         Buffer.from(projectId.substring(0, 18)),
+  //         Buffer.from(projectId.substring(18, 36)),
+  //       ],
+  //       projectProgram.programId
+  //     );
+
+  //   const [generalPDA, generalBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [Buffer.from("general")],
+  //       generalProgram.programId
+  //     );
+
+  //   const [projectPoolWalletPDA, projectPoolWalletBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("pool"),
+  //         Buffer.from(transferId.substring(0, 18)),
+  //         Buffer.from(transferId.substring(18, 36)),
+  //       ],
+  //       transferProgram.programId
+  //     );
+
+  //   const _casTokenAccountBefore = await spl.getAccount(
+  //     provider.connection,
+  //     casTokenAccount
+  //   );
+
+  //   const _projectPoolWalletAccountBefore = await spl.getAccount(
+  //     provider.connection,
+  //     projectPoolWalletPDA
+  //   );
+
+  //   const tx = await transferProgram.methods
+  //     .signTransfer(
+  //       transferBump,
+  //       generalBump,
+  //       projectBump,
+  //       projectPoolWalletBump,
+  //       transferId,
+  //       projectId
+  //     )
+  //     .accounts({
+  //       baseAccount: transferPDA,
+  //       projectAccount: projectPDA,
+  //       generalAccount: generalPDA,
+  //       projectPoolWallet: projectPoolWalletPDA,
+  //       tokenMint: USDCMint,
+  //       authority: alice.publicKey,
+  //       walletToWithdrawFrom: casTokenAccount,
+  //       generalProgram: generalProgram.programId,
+  //       projectProgram: projectProgram.programId,
+  //       systemProgram: anchor.web3.SystemProgram.programId,
+  //       tokenProgram: spl.TOKEN_PROGRAM_ID,
+  //       rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+  //     })
+  //     .signers([alice])
+  //     .rpc();
+
+  //     const tx1 = await transferProgram.methods
+  //     .signTransfer(
+  //       transferBump,
+  //       generalBump,
+  //       projectBump,
+  //       projectPoolWalletBump,
+  //       transferId,
+  //       projectId
+  //     )
+  //     .accounts({
+  //       baseAccount: transferPDA,
+  //       projectAccount: projectPDA,
+  //       generalAccount: generalPDA,
+  //       projectPoolWallet: projectPoolWalletPDA,
+  //       tokenMint: USDCMint,
+  //       authority: cas.publicKey,
+  //       walletToWithdrawFrom: casTokenAccount,
+  //       generalProgram: generalProgram.programId,
+  //       projectProgram: projectProgram.programId,
+  //       systemProgram: anchor.web3.SystemProgram.programId,
+  //       tokenProgram: spl.TOKEN_PROGRAM_ID,
+  //       rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+  //     })
+  //     .signers([cas])
+  //     .rpc();
+
+  //     const tx2 = await transferProgram.methods
+  //     .signTransfer(
+  //       transferBump,
+  //       generalBump,
+  //       projectBump,
+  //       projectPoolWalletBump,
+  //       transferId,
+  //       projectId
+  //     )
+  //     .accounts({
+  //       baseAccount: transferPDA,
+  //       projectAccount: projectPDA,
+  //       generalAccount: generalPDA,
+  //       projectPoolWallet: projectPoolWalletPDA,
+  //       tokenMint: USDCMint,
+  //       authority: admin.publicKey,
+  //       walletToWithdrawFrom: casTokenAccount,
+  //       generalProgram: generalProgram.programId,
+  //       projectProgram: projectProgram.programId,
+  //       systemProgram: anchor.web3.SystemProgram.programId,
+  //       tokenProgram: spl.TOKEN_PROGRAM_ID,
+  //       rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+  //     })
+  //     .signers([admin])
+  //     .rpc();
+
+  //   const _casTokenAccountAfter = await spl.getAccount(
+  //     provider.connection,
+  //     casTokenAccount
+  //   );
+
+  //   const _projectPoolWalletAccountAfter = await spl.getAccount(
+  //     provider.connection,
+  //     projectPoolWalletPDA
+  //   );
+
+  //   assert.equal(
+  //     10,
+  //     _casTokenAccountAfter.amount - _casTokenAccountBefore.amount
+  //   );
+  //   assert.equal(
+  //     10,
+  //     _projectPoolWalletAccountBefore.amount -
+  //       _projectPoolWalletAccountAfter.amount
+  //   );
+  // });
+
+  // it("Query all the signatories", async() => {
+  //   const [projectPDA, projectBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("project"),
+  //         Buffer.from(projectId.substring(0, 18)),
+  //         Buffer.from(projectId.substring(18, 36)),
+  //       ],
+  //       projectProgram.programId
+  //     );
+
+  //     const [transferPDA, transferBump] =
+  //     await anchor.web3.PublicKey.findProgramAddress(
+  //       [
+  //         Buffer.from("transfer"),
+  //         Buffer.from(transferId.substring(0, 18)),
+  //         Buffer.from(transferId.substring(18, 36)),
+  //       ],
+  //       transferProgram.programId
+  //     );
+
+  //   const state = await projectProgram.account.projectParameter.fetch(projectPDA);
+  //   const transferState = await transferProgram.account.transferParameter.fetch(transferPDA);
+  //   console.log(state.signatories);
+  //   assert.equal(state.threshold, newThreshold);
+  // })
 });

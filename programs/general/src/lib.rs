@@ -29,7 +29,7 @@ pub mod general {
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(init, payer = authority, seeds = [GENERAL_SEED], bump, space = 32 + 32 + 8)]
+    #[account(init, payer = authority, seeds = [GENERAL_SEED], bump, space = 32 + 32 + 32 + 1 + 1 + 8)]
     pub base_account: Account<'info, GeneralParameter>,
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -50,5 +50,8 @@ pub struct ChangeMint<'info> {
 #[account]
 pub struct GeneralParameter {
     pub authority: Pubkey, // 32
-    pub token_mint: Pubkey // 32
+    pub token_mint: Pubkey, // 32
+    pub min_percentage_amount_to_transfer: u8, // 1
+    pub admin_wallet: Pubkey, // 32
+    pub version: u8 //1
 }
