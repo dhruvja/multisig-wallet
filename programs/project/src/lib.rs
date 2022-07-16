@@ -1,3 +1,5 @@
+use std::vec;
+
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount, Transfer};
 use general::program::General;
@@ -22,6 +24,18 @@ pub mod project {
         parameters.authority = ctx.accounts.admin.key();
         parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
         parameters.percent_transfer = percent_transfer;
+        parameters.threshold = 1;
+
+        let sig = Signature {
+            key: ctx.accounts.authority.key(),
+            add: false,
+            delete: false,
+            change_threshold: false,
+            change_time_limit: false,
+            transfer_amount: false,
+        };
+        parameters.signatories.push(sig);
+
         Ok(())
     }
 
@@ -61,7 +75,7 @@ pub mod project {
         ctx: Context<Proposal>,
         _base_bump: u8,
         _project_id: String,
-        signatory: Pubkey,
+        signatory: Vec<Pubkey>,
     ) -> Result<()> {
         let parameters = &mut ctx.accounts.base_account;
 
@@ -75,7 +89,6 @@ pub mod project {
         } else {
             parameters.create_add(signatory);
         }
-        parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
         Ok(())
     }
 
@@ -105,7 +118,6 @@ pub mod project {
             }
             parameters.create_delete(signatory);
         }
-        parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
         Ok(())
     }
 
@@ -114,22 +126,58 @@ pub mod project {
         _base_bump: u8,
         _project_id: String,
         threshold: u32,
+        current_timestamp: u32,
     ) -> Result<()> {
         let parameters = &mut ctx.accounts.base_account;
 
-        if parameters.change_threshold.status == true {
-            let current_timestamp = Clock::get().unwrap().unix_timestamp;
-            if (current_timestamp - parameters.change_threshold.timestamp)
-                > parameters.time_limit.into()
-            {
-                parameters.create_change(threshold);
+        let day = 60 * 60 * 24;
+        // let current_timestamp = Clock::get().unwrap().unix_timestamp;
+
+        if (current_timestamp as i32 - parameters.last_tx) / day >= 90 {
+            msg!("reduce the approvals");
+
+            if parameters.approval < parameters.threshold {
+                let mut months =
+                    (current_timestamp as i32 - parameters.last_reduced_threshold) / day;
+                months = months / 30;
+                if months < 1 {
+                    return Err(error!(ErrorCode::MinimumTimeNotPassed));
+                } else {
+                    if parameters.approval - (months as u32) > 1 {
+                        parameters.approval -= months as u32;
+                        parameters.last_reduced_threshold = current_timestamp as i32;
+                        parameters.reduce_approval(threshold);
+                    } else {
+                        parameters.approval = 1;
+                        parameters.last_reduced_threshold = current_timestamp as i32;
+                        parameters.reduce_approval(threshold);
+                    }
+                }
             } else {
-                return Err(error!(ErrorCode::ProposalInProgress));
+                let mut months = (current_timestamp as i32 - parameters.last_tx) / day;
+                months = ((months - 90) / 30) + 1;
+                if parameters.approval - (months as u32) > 1 {
+                    parameters.approval -= months as u32;
+                    parameters.last_reduced_threshold = current_timestamp as i32;
+                } else {
+                    parameters.approval = 1;
+                    parameters.last_reduced_threshold = current_timestamp as i32;
+                }
             }
         } else {
-            parameters.create_change(threshold);
+            if parameters.change_threshold.status == true {
+                if (current_timestamp as i64 - parameters.change_threshold.timestamp)
+                    > parameters.time_limit.into()
+                {
+                    parameters.create_change(threshold);
+                } else {
+                    return Err(error!(ErrorCode::ProposalInProgress));
+                }
+            } else {
+                parameters.create_change(threshold);
+            }
         }
-        parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
+
         Ok(())
     }
 
@@ -153,7 +201,6 @@ pub mod project {
         } else {
             parameters.create_time_limit(time_limit);
         }
-        parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
         Ok(())
     }
 
@@ -178,7 +225,6 @@ pub mod project {
         } else {
             parameters.create_transfer_amount(amount, reciever);
         }
-        parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
         Ok(())
     }
 
@@ -204,15 +250,18 @@ pub mod project {
                         parameters.add.votes += 1;
 
                         if parameters.add.votes >= parameters.threshold {
-                            let sig = Signature {
-                                key: parameters.add.new_signatory,
-                                add: false,
-                                delete: false,
-                                change_threshold: false,
-                                change_time_limit: false,
-                                transfer_amount: false,
-                            };
-                            parameters.signatories.push(sig);
+                            for i in 0..parameters.add.new_signatory.len() {
+                                let sig = Signature {
+                                    key: parameters.add.new_signatory[i],
+                                    add: false,
+                                    delete: false,
+                                    change_threshold: false,
+                                    change_time_limit: false,
+                                    transfer_amount: false,
+                                };
+                                parameters.signatories.push(sig);
+                            }
+                            parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
                             parameters.reset_add();
                         }
                     } else {
@@ -235,6 +284,7 @@ pub mod project {
                                 if parameters.signatories[i].key == parameters.delete.old_signatory
                                 {
                                     index = i;
+                                    break;
                                 }
                             }
                             if index == usize::MAX {
@@ -248,6 +298,7 @@ pub mod project {
                                     parameters.signatories.len().try_into().unwrap();
                             }
                             parameters.reset_delete();
+                            parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
                         }
                     } else {
                         return Err(error!(ErrorCode::RepeatedSignature));
@@ -262,8 +313,10 @@ pub mod project {
                         parameters.signatories[final_index].change_threshold = true;
                         parameters.change_threshold.votes += 1;
 
-                        if parameters.change_threshold.votes >= parameters.threshold {
+                        if parameters.change_threshold.votes >= parameters.approval {
                             parameters.threshold = parameters.change_threshold.new_threshold;
+                            parameters.approval = parameters.change_threshold.new_threshold;
+                            parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
                             parameters.reset_change();
                         }
                     } else {
@@ -281,6 +334,7 @@ pub mod project {
 
                         if parameters.change_time_limit.votes >= parameters.threshold {
                             parameters.time_limit = parameters.change_time_limit.new_time_limit;
+                            parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
                             parameters.reset_time_limit();
                         }
                     } else {
@@ -292,7 +346,6 @@ pub mod project {
             }
             _ => msg!("Wrong proposal"),
         }
-        parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
         Ok(())
     }
 
@@ -367,7 +420,6 @@ pub mod project {
         _pool_bump: u8,
         project_id: String,
     ) -> Result<()> {
-
         let parameters = &mut ctx.accounts.base_account;
 
         let final_index = parameters.get_index(ctx.accounts.authority.key());
@@ -382,40 +434,45 @@ pub mod project {
                 parameters.transfer_amount.votes += 1;
 
                 if parameters.transfer_amount.votes >= parameters.threshold {
-                    
-                    if parameters.transfer_amount.reciever != ctx.accounts.wallet_to_withdraw_from.key() {
+                    if parameters.transfer_amount.reciever
+                        != ctx.accounts.wallet_to_withdraw_from.key()
+                    {
                         return Err(error!(ErrorCode::InvalidReciever));
                     } else {
-                        msg!("transfering the amount to the reciever");
-        
-                        let bump_vector = project_bump.to_le_bytes();
-                        let inner = vec![
-                            PROJECT_SEED,
-                            project_id.as_bytes()[..18].as_ref(),
-                            project_id.as_bytes()[18..].as_ref(),
-                            bump_vector.as_ref(),
-                        ];
-                        let outer = vec![inner.as_slice()];
-        
-                        // Below is the actual instruction that we are going to send to the Token program.
-                        let transfer_instruction = Transfer {
-                            from: ctx.accounts.project_pool_account.to_account_info(),
-                            to: ctx.accounts.wallet_to_withdraw_from.to_account_info(),
-                            authority: parameters.to_account_info(),
-                        };
-                        let cpi_ctx = CpiContext::new_with_signer(
-                            ctx.accounts.token_program.to_account_info(),
-                            transfer_instruction,
-                            outer.as_slice(), //signer PDA
-                        );
-        
-                        let amount_in_64 = parameters.transfer_amount.amount as u64;
-        
-                        // The `?` at the end will cause the function to return early in case of an error.
-                        // This pattern is common in Rust.
-                        anchor_spl::token::transfer(cpi_ctx, amount_in_64)?;
+                        if !parameters.shutdown && parameters.threshold == 1 {
+                            return Err(error!(ErrorCode::CannotTransferDueToLowThreshold));
+                        } else {
+                            msg!("transfering the amount to the reciever");
+
+                            let bump_vector = project_bump.to_le_bytes();
+                            let inner = vec![
+                                PROJECT_SEED,
+                                project_id.as_bytes()[..18].as_ref(),
+                                project_id.as_bytes()[18..].as_ref(),
+                                bump_vector.as_ref(),
+                            ];
+                            let outer = vec![inner.as_slice()];
+
+                            // Below is the actual instruction that we are going to send to the Token program.
+                            let transfer_instruction = Transfer {
+                                from: ctx.accounts.project_pool_account.to_account_info(),
+                                to: ctx.accounts.wallet_to_withdraw_from.to_account_info(),
+                                authority: parameters.to_account_info(),
+                            };
+                            let cpi_ctx = CpiContext::new_with_signer(
+                                ctx.accounts.token_program.to_account_info(),
+                                transfer_instruction,
+                                outer.as_slice(), //signer PDA
+                            );
+
+                            let amount_in_64 = parameters.transfer_amount.amount as u64;
+
+                            // The `?` at the end will cause the function to return early in case of an error.
+                            // This pattern is common in Rust.
+                            anchor_spl::token::transfer(cpi_ctx, amount_in_64)?;
+                        }
                     }
-                    
+
                     parameters.reset_transfer_amount();
                 }
             } else {
@@ -470,7 +527,7 @@ pub mod project {
 #[derive(Accounts)]
 #[instruction(project_id: String)]
 pub struct Initialize<'info> {
-    #[account(init, payer = authority, seeds = [PROJECT_SEED, project_id.as_bytes()[..18].as_ref(), project_id.as_bytes()[18..].as_ref()], bump, space = 1000)]
+    #[account(init, payer = authority, seeds = [PROJECT_SEED, project_id.as_bytes()[..18].as_ref(), project_id.as_bytes()[18..].as_ref()], bump, space = 1800)]
     pub base_account: Account<'info, ProjectParameter>,
     #[account(
         init, payer = authority,
@@ -495,8 +552,8 @@ pub struct Initialize<'info> {
 pub struct AddInitialSignatories<'info> {
     #[account(mut, seeds = [PROJECT_SEED, project_id.as_bytes()[..18].as_ref(), project_id.as_bytes()[18..].as_ref()], bump = base_bump)]
     pub base_account: Account<'info, ProjectParameter>,
-    // #[account(mut)]
-    // pub authority: Signer<'info>,
+    #[account(mut, constraint = authority.key() == base_account.signatories[0].key @ErrorCode::InvalidSigner)]
+    pub authority: Signer<'info>,
     // pub system_program: Program<'info, System>
 }
 
@@ -593,10 +650,10 @@ pub struct Signature {
 
 #[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize, PartialEq)]
 pub struct AddSignatory {
-    pub status: bool,          // 1
-    pub new_signatory: Pubkey, // 32
-    pub timestamp: i64,        // 8
-    pub votes: u32,            // 4
+    pub status: bool,               // 1
+    pub new_signatory: Vec<Pubkey>, // 32*10
+    pub timestamp: i64,             // 8
+    pub votes: u32,                 // 4
 }
 
 #[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize, PartialEq)]
@@ -646,6 +703,7 @@ pub struct ProjectParameter {
     pub percent_transfer: u8,               // 1
     pub shutdown: bool,                     // 1
     pub last_reduced_threshold: i32,        //4
+    pub approval: u32,                      //4
 }
 
 impl ProjectParameter {
@@ -664,16 +722,19 @@ impl ProjectParameter {
         self.add.votes = 0;
         self.add.status = false;
         self.add.timestamp = 0;
+        self.add.new_signatory = Vec::new();
 
         for i in 0..self.signatories.len() {
             self.signatories[i].add = false;
         }
     }
-    pub fn create_add(&mut self, signatory: Pubkey) {
+    pub fn create_add(&mut self, signatories: Vec<Pubkey>) {
         self.add.status = true;
-        self.add.new_signatory = signatory;
         self.add.timestamp = Clock::get().unwrap().unix_timestamp;
         self.add.votes = 0;
+        for i in 0..signatories.len() {
+            self.add.new_signatory.push(signatories[i]);
+        }
     }
 
     pub fn create_delete(&mut self, signatory: Pubkey) {
@@ -698,6 +759,7 @@ impl ProjectParameter {
         self.change_threshold.new_threshold = threshold;
         self.change_threshold.timestamp = Clock::get().unwrap().unix_timestamp;
         self.change_threshold.votes = 0;
+        self.approval = self.threshold;
     }
 
     pub fn reset_change(&mut self) {
@@ -705,10 +767,19 @@ impl ProjectParameter {
         self.change_threshold.new_threshold = 0;
         self.change_threshold.timestamp = 0;
         self.change_threshold.votes = 0;
+        self.last_reduced_threshold = 0;
+        self.shutdown = false;
 
         for i in 0..self.signatories.len() {
             self.signatories[i].change_threshold = false;
         }
+    }
+
+    pub fn reduce_approval(&mut self, threshold: u32) {
+        self.change_threshold.status = true;
+        self.change_threshold.new_threshold = threshold;
+        self.change_threshold.timestamp = Clock::get().unwrap().unix_timestamp;
+        self.change_threshold.votes = 0;
     }
 
     pub fn create_time_limit(&mut self, time_limit: u32) {
@@ -770,4 +841,6 @@ pub enum ErrorCode {
     MinimumTimeNotPassed,
     #[msg("The reciever does not match")]
     InvalidReciever,
+    #[msg("The transfer cannot be completed if there is only 1 signatory, add more signatories and you can complete the transfer")]
+    CannotTransferDueToLowThreshold,
 }

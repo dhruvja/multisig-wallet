@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::Mint;    
+use anchor_spl::token::Mint; 
 
 declare_id!("5urf7xSHXmvWP6oxLHHhW1aEefDw1D4Wq342ccRFBBv5");
 
@@ -11,9 +11,12 @@ pub mod general {
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
 
+        let version: u8 = 1;
+
         let parameters = &mut ctx.accounts.base_account;
         parameters.authority = ctx.accounts.authority.key();
         parameters.token_mint = ctx.accounts.token_mint.key();
+        parameters.version = version;
 
         Ok(())
     }
@@ -22,6 +25,14 @@ pub mod general {
 
         let parameters = &mut ctx.accounts.base_account;
         parameters.token_mint = ctx.accounts.token_mint.key();
+
+        Ok(())
+    }
+
+    pub fn change_version(ctx: Context<ChangeVersion>, version: u8) -> Result<()> {
+
+        let parameters = &mut ctx.accounts.base_account;
+        parameters.version = version;
 
         Ok(())
     }
@@ -47,11 +58,20 @@ pub struct ChangeMint<'info> {
     pub token_mint: Account<'info, Mint>,
 }
 
+#[derive(Accounts)]
+#[instruction(base_bump: u8)]
+pub struct ChangeVersion<'info> {
+    #[account(mut, seeds = [GENERAL_SEED], bump = base_bump, has_one = authority)]
+    pub base_account: Account<'info,GeneralParameter>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+}
+
 #[account]
 pub struct GeneralParameter {
     pub authority: Pubkey, // 32
     pub token_mint: Pubkey, // 32
     pub min_percentage_amount_to_transfer: u8, // 1
     pub admin_wallet: Pubkey, // 32
-    pub version: u8 //1
+    pub version: u8 // 1
 }
