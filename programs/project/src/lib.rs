@@ -96,25 +96,31 @@ pub mod project {
         ctx: Context<Proposal>,
         _base_bump: u8,
         _project_id: String,
-        signatory: Pubkey,
+        signatory: Vec<Pubkey>,
     ) -> Result<()> {
         let parameters = &mut ctx.accounts.base_account;
 
-        let index = parameters.get_index(signatory);
+        let mut index = usize::MAX;
 
         if parameters.delete.status == true {
             let current_timestamp = Clock::get().unwrap().unix_timestamp;
             if (current_timestamp - parameters.delete.timestamp) > parameters.time_limit.into() {
-                if index == usize::MAX {
-                    return Err(error!(ErrorCode::SignatoryNotFound));
+                for i in 0..signatory.len() {
+                    index = parameters.get_index(signatory[i]);
+                    if index == usize::MAX {
+                        return Err(error!(ErrorCode::SignatoryNotFound));
+                    }
                 }
                 parameters.create_delete(signatory);
             } else {
                 return Err(error!(ErrorCode::ProposalInProgress));
             }
         } else {
-            if index == usize::MAX {
-                return Err(error!(ErrorCode::SignatoryNotFound));
+            for i in 0..signatory.len() {
+                index = parameters.get_index(signatory[i]);
+                if index == usize::MAX {
+                    return Err(error!(ErrorCode::SignatoryNotFound));
+                }
             }
             parameters.create_delete(signatory);
         }
@@ -278,19 +284,25 @@ pub mod project {
                         parameters.delete.votes += 1;
 
                         let mut index = usize::MAX;
+                        let mut allIndex = Vec::new();
 
-                        if parameters.delete.votes >= parameters.threshold {
-                            for i in 0..parameters.signatories.len() {
-                                if parameters.signatories[i].key == parameters.delete.old_signatory
-                                {
-                                    index = i;
-                                    break;
-                                }
-                            }
+                        for i in 0..parameters.delete.old_signatory.len() {
+                            index = parameters.get_index(parameters.delete.old_signatory[i]);
                             if index == usize::MAX {
                                 return Err(error!(ErrorCode::SignatoryNotFound));
                             }
-                            parameters.signatories.remove(index);
+                            else{
+                                allIndex.push(index);
+                            }
+                        }
+
+                        allIndex.sort();
+
+                        if parameters.delete.votes >= parameters.threshold {
+
+                            for i in 0..allIndex.len() {
+                                parameters.signatories.remove(allIndex[i] - i);
+                            }
                             if parameters.threshold
                                 > parameters.signatories.len().try_into().unwrap()
                             {
@@ -659,7 +671,7 @@ pub struct AddSignatory {
 #[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize, PartialEq)]
 pub struct DeleteSignatory {
     pub status: bool,          // 1
-    pub old_signatory: Pubkey, // 32
+    pub old_signatory: Vec<Pubkey>, // 32*10
     pub timestamp: i64,        // 8
     pub votes: u32,            // 4
 }
@@ -737,17 +749,20 @@ impl ProjectParameter {
         }
     }
 
-    pub fn create_delete(&mut self, signatory: Pubkey) {
+    pub fn create_delete(&mut self, signatories: Vec<Pubkey>) {
         self.delete.status = true;
-        self.delete.old_signatory = signatory;
         self.delete.timestamp = Clock::get().unwrap().unix_timestamp;
         self.delete.votes = 0;
+        for i in 0..signatories.len() {
+            self.delete.old_signatory.push(signatories[i]);
+        }
     }
 
     pub fn reset_delete(&mut self) {
         self.delete.votes = 0;
         self.delete.status = false;
         self.delete.timestamp = 0;
+        self.delete.old_signatory = Vec::new();
 
         for i in 0..self.signatories.len() {
             self.signatories[i].delete = false;

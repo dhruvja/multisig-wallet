@@ -2,7 +2,6 @@ import * as anchor from "@project-serum/anchor";
 import { Program } from "@project-serum/anchor";
 import { Project } from "../target/types/project";
 import { General } from "../target/types/general";
-import { Transfer } from "../target/types/transfer";
 const assert = require("assert");
 import * as spl from "@solana/spl-token";
 import bs58 from "bs58";
@@ -16,7 +15,6 @@ describe("project", () => {
 
   const projectProgram = anchor.workspace.Project as Program<Project>;
   const generalProgram = anchor.workspace.General as Program<General>;
-  const transferProgram = anchor.workspace.Transfer as Program<Transfer>;
 
   let alice: anchor.web3.Keypair;
   let bob: anchor.web3.Keypair;
@@ -484,14 +482,23 @@ describe("project", () => {
         projectProgram.programId
       );
 
-    const tx = await projectProgram.methods
-      .removeSignatoryProposal(projectBump, projectId, dan.publicKey)
+    const oldSigs = [
+        dan.publicKey,
+        extra.publicKey
+      ];
+      try {
+        const tx = await projectProgram.methods
+      .removeSignatoryProposal(projectBump, projectId, oldSigs)
       .accounts({
         baseAccount: projectPDA,
         authority: admin.publicKey,
       })
       .signers([admin])
       .rpc();
+      } catch (error) {
+        console.log(error)
+      }
+    
 
     const state = await projectProgram.account.projectParameter.fetch(
       projectPDA
@@ -550,6 +557,9 @@ describe("project", () => {
 
     for (let i = 0; i < state.signatories.length; i++) {
       if (state.signatories[i].key.toBase58() == dan.publicKey.toBase58()) {
+        throw "Signatory has not been deleted";
+      }
+      else if (state.signatories[i].key.toBase58() == extra.publicKey.toBase58()) {
         throw "Signatory has not been deleted";
       }
     }
@@ -936,7 +946,7 @@ describe("project", () => {
         projectProgram.programId
       );
 
-    const timestampAfter90Days = new Date(2022, 9, 15).getTime() / 1000;
+    const timestampAfter90Days = new Date(2022, 9, 17).getTime() / 1000;
     const currentTimestamp = new Date().getTime() / 1000;
 
     let days = 60 * 60 * 24;
@@ -963,7 +973,7 @@ describe("project", () => {
 
     assert.equal(state.approval, newApproval);
 
-    const timestampAfter100Days = new Date(2022, 9, 25).getTime() / 1000;
+    const timestampAfter100Days = new Date(2022, 9, 27).getTime() / 1000;
 
     try {
       await projectProgram.methods
@@ -983,7 +993,7 @@ describe("project", () => {
       assert.equal(error.error.errorCode.code, "MinimumTimeNotPassed");
     }
 
-    const timestampAfter150Days = new Date(2022, 11, 15).getTime() / 1000;
+    const timestampAfter150Days = new Date(2022, 11, 17).getTime() / 1000;
     numberOfDays = (timestampAfter150Days - timestampAfter90Days) / days;
     numberOfMonths = numberOfDays / 30;
 
