@@ -130,7 +130,7 @@ describe("project", () => {
   it("Initialize general program", async () => {
     const [generalPDA, generalBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("general")],
+        [Buffer.from("general1")],
         generalProgram.programId
       );
 
@@ -195,7 +195,7 @@ describe("project", () => {
 
     const [generalPDA, generalBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("general")],
+        [Buffer.from("general1")],
         generalProgram.programId
       );
 
@@ -257,7 +257,7 @@ describe("project", () => {
 
     const [generalPDA, generalBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("general")],
+        [Buffer.from("general1")],
         generalProgram.programId
       );
 
@@ -792,7 +792,7 @@ describe("project", () => {
 
     const [generalPDA, generalBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("general")],
+        [Buffer.from("general1")],
         generalProgram.programId
       );
 
@@ -899,7 +899,7 @@ describe("project", () => {
 
     const [generalPDA, generalBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from("general")],
+        [Buffer.from("general1")],
         generalProgram.programId
       );
 
@@ -932,7 +932,6 @@ describe("project", () => {
       casTokenAccount
     );
 
-    // console.log(casTokenAccountAfter.amount);
   });
 
   it("Reduces the number of approvals after 90 days", async () => {

@@ -9,7 +9,7 @@ declare_id!("45GpJwQe42EXn8EQoyBnp5dU51h2BWrkv8ASmGKERpKD");
 
 const PROJECT_SEED: &'static [u8] = b"project";
 const POOL_SEED: &'static [u8] = b"pool";
-const GENERAL_SEED: &'static [u8] = b"general";
+const GENERAL_SEED: &'static [u8] = b"general1";
 
 #[program]
 pub mod project {
@@ -25,6 +25,7 @@ pub mod project {
         parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
         parameters.percent_transfer = percent_transfer;
         parameters.threshold = 1;
+        parameters.time_limit = 600;
 
         let sig = Signature {
             key: ctx.accounts.authority.key(),
@@ -79,6 +80,15 @@ pub mod project {
     ) -> Result<()> {
         let parameters = &mut ctx.accounts.base_account;
 
+        let mut index = usize::MAX;
+
+        for i in 0..signatory.len() {
+            index = parameters.get_index(signatory[i]);
+            if index != usize::MAX {
+                return Err(error!(ErrorCode::SignatoryAlreadyExists));
+            }
+        }
+
         if parameters.add.status == true {
             let current_timestamp = Clock::get().unwrap().unix_timestamp;
             if (current_timestamp - parameters.add.timestamp) > parameters.time_limit.into() {
@@ -101,6 +111,10 @@ pub mod project {
         let parameters = &mut ctx.accounts.base_account;
 
         let mut index = usize::MAX;
+
+        if parameters.signatories.len() == 1 {
+            return Err(error!(ErrorCode::CannotRemoveSignatory));
+        }
 
         if parameters.delete.status == true {
             let current_timestamp = Clock::get().unwrap().unix_timestamp;
@@ -138,6 +152,10 @@ pub mod project {
 
         let day = 60 * 60 * 24;
         // let current_timestamp = Clock::get().unwrap().unix_timestamp;
+
+        if threshold > parameters.signatories.len().try_into().unwrap() {
+            return Err(error!(ErrorCode::ThresholdIsMore));
+        }
 
         if (current_timestamp as i32 - parameters.last_tx) / day >= 90 {
             msg!("reduce the approvals");
@@ -195,6 +213,14 @@ pub mod project {
     ) -> Result<()> {
         let parameters = &mut ctx.accounts.base_account;
 
+        if time_limit < 600 {
+            return Err(error!(ErrorCode::TimeoutLow));
+        }
+
+        if time_limit > 60 * 60 * 24 * 30 {
+            return Err(error!(ErrorCode::TimeoutMore));
+        }
+
         if parameters.change_time_limit.status == true {
             let current_timestamp = Clock::get().unwrap().unix_timestamp;
             if (current_timestamp - parameters.change_time_limit.timestamp)
@@ -218,6 +244,10 @@ pub mod project {
         reciever: Pubkey,
     ) -> Result<()> {
         let parameters = &mut ctx.accounts.base_account;
+
+        if amount > parameters.staked_amount {
+            return Err(error!(ErrorCode::InsufficientBalance));
+        }
 
         if parameters.transfer_amount.status == true {
             let current_timestamp = Clock::get().unwrap().unix_timestamp;
@@ -290,8 +320,7 @@ pub mod project {
                             index = parameters.get_index(parameters.delete.old_signatory[i]);
                             if index == usize::MAX {
                                 return Err(error!(ErrorCode::SignatoryNotFound));
-                            }
-                            else{
+                            } else {
                                 allIndex.push(index);
                             }
                         }
@@ -299,7 +328,6 @@ pub mod project {
                         allIndex.sort();
 
                         if parameters.delete.votes >= parameters.threshold {
-
                             for i in 0..allIndex.len() {
                                 parameters.signatories.remove(allIndex[i] - i);
                             }
@@ -482,6 +510,7 @@ pub mod project {
                             // The `?` at the end will cause the function to return early in case of an error.
                             // This pattern is common in Rust.
                             anchor_spl::token::transfer(cpi_ctx, amount_in_64)?;
+                            parameters.staked_amount -= parameters.transfer_amount.amount;
                         }
                     }
 
@@ -670,10 +699,10 @@ pub struct AddSignatory {
 
 #[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize, PartialEq)]
 pub struct DeleteSignatory {
-    pub status: bool,          // 1
+    pub status: bool,               // 1
     pub old_signatory: Vec<Pubkey>, // 32*10
-    pub timestamp: i64,        // 8
-    pub votes: u32,            // 4
+    pub timestamp: i64,             // 8
+    pub votes: u32,                 // 4
 }
 
 #[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize, PartialEq)]
@@ -716,6 +745,7 @@ pub struct ProjectParameter {
     pub shutdown: bool,                     // 1
     pub last_reduced_threshold: i32,        //4
     pub approval: u32,                      //4
+    pub token_mint: Pubkey,                 // 32
 }
 
 impl ProjectParameter {
@@ -838,6 +868,18 @@ impl ProjectParameter {
 pub enum ErrorCode {
     #[msg("Invalid Signer")]
     InvalidSigner,
+    #[msg("Insufficient balance in project wallet, could not create transfer proposal.")]
+    InsufficientBalance,
+    #[msg("Cannot add new signatory, Signatory already exists")]
+    SignatoryAlreadyExists,
+    #[msg("Only one signatory is left, cannot remove until more signatories are added")]
+    CannotRemoveSignatory,
+    #[msg("Threshold is more than the signatories, cannot change it")]
+    ThresholdIsMore,
+    #[msg("The minimum timeout is supposed to be 10 minutes, enter more than that")]
+    TimeoutLow,
+    #[msg("The maximum timeout is supposed to be 30 minutes, enter less than that")]
+    TimeoutMore,
     #[msg("You have already signed")]
     RepeatedSignature,
     #[msg("There is no proposal to sign")]

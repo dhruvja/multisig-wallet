@@ -3,7 +3,7 @@ use anchor_spl::token::Mint;
 
 declare_id!("5urf7xSHXmvWP6oxLHHhW1aEefDw1D4Wq342ccRFBBv5");
 
-const GENERAL_SEED: &'static [u8] = b"general";
+const GENERAL_SEED: &'static [u8] = b"general1";
 
 #[program]
 pub mod general {
