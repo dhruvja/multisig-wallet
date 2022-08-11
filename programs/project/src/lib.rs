@@ -264,6 +264,22 @@ pub mod project {
         Ok(())
     }
 
+    pub fn shutdown_proposal (
+        ctx: Context<Proposal>,
+        _base_bump: u8,
+        _project_id: String
+    ) -> Result<()> {
+        let parameters = &mut ctx.accounts.base_account;
+
+        if parameters.staked_amount > 0 {
+            return Err(error!(ErrorCode::EmptyFundsBeforeClosing))
+        }
+        else {
+            parameters.create_shutdown();
+        }
+        Ok(())
+    }
+
     pub fn sign_proposal(
         ctx: Context<SignProposal>,
         _base_bump: u8,
@@ -727,6 +743,12 @@ pub struct TransferAmount {
     pub timestamp: i64,   // 8
     pub votes: u32,       // 4
 }
+#[derive(Debug, Clone, AnchorSerialize, AnchorDeserialize, PartialEq)]
+pub struct Shutdown {
+    pub status: bool,   // 1
+    pub timestamp: i64, // 8
+    pub votes: u32,     // 4
+}
 
 #[account]
 pub struct ProjectParameter {
@@ -737,12 +759,12 @@ pub struct ProjectParameter {
     pub change_threshold: ChangeThreshold,  // 13
     pub change_time_limit: ChangeTimeLimit, // 13
     pub transfer_amount: TransferAmount,    // 45
+    pub shutdown: Shutdown,                 // 13
     pub threshold: u32,                     // 4
     pub time_limit: u32,                    // 4
     pub last_tx: i32,                       // 4
     pub staked_amount: u32,                 // 4
     pub percent_transfer: u8,               // 1
-    pub shutdown: bool,                     // 1
     pub last_reduced_threshold: i32,        //4
     pub approval: u32,                      //4
     pub token_mint: Pubkey,                 // 32
@@ -862,6 +884,11 @@ impl ProjectParameter {
             self.signatories[i].transfer_amount = false;
         }
     }
+    pub fn create_shutdown(&mut self) {
+        self.status = true;
+        self.timestamp = Clock::get().unwrap().unix_timestamp;
+        self.votes = 0;
+    }
 }
 
 #[error_code]
@@ -900,4 +927,6 @@ pub enum ErrorCode {
     InvalidReciever,
     #[msg("The transfer cannot be completed if there is only 1 signatory, add more signatories and you can complete the transfer")]
     CannotTransferDueToLowThreshold,
+    #[msg("The shutdown can be done only when the project wallet doesnt have any funds ")]
+    EmptyFundsBeforeClosing
 }
