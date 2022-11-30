@@ -23,6 +23,7 @@ pub mod project {
         let parameters = &mut ctx.accounts.base_account;
         parameters.authority = ctx.accounts.admin.key();
         parameters.last_tx = Clock::get().unwrap().unix_timestamp as i32;
+        // TODO: Check if percent transfer is above the minimum from the general program
         parameters.percent_transfer = percent_transfer;
         parameters.threshold = 1;
         parameters.time_limit = 600;
